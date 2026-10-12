@@ -1,0 +1,46 @@
+name: Weekly lineups
+
+# Odds props are pulled once per game: Thursday morning for Thu-Sat games, Sunday morning for Sun+Mon.
+# GitHub cron is UTC and can start 5-30 min late.
+#   Thu 14:00 UTC = 10am EDT / 9am EST
+#   Sun 12:00 UTC =  8am EDT / 7am EST (ahead of 9:30am ET London games)
+on:
+  schedule:
+    - cron: "0 14 * * 4"
+    - cron: "0 12 * * 0"
+  workflow_dispatch:
+    inputs:
+      slate:
+        description: "auto | thu | sun"
+        default: auto
+      no_odds:
+        description: "Skip odds calls (use cached props, 0 credits)"
+        type: boolean
+        default: false
+
+jobs:
+  lineups:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      # Keep the week's cached props between the Thursday and Sunday runs (and manual re-runs).
+      - uses: actions/cache@v4
+        with:
+          path: data
+          key: lineup-data-${{ github.run_id }}
+          restore-keys: lineup-data-
+      - name: Build lineups
+        env:
+          SLEEPER_LEAGUE_ID: ${{ secrets.SLEEPER_LEAGUE_ID }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: |
+          python -m ff_lineups --slate "${{ inputs.slate || 'auto' }}" ${{ inputs.no_odds && '--no-odds' || '' }} > lineups.md
+          cat lineups.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lineups-${{ github.run_number }}
+          path: reports/
