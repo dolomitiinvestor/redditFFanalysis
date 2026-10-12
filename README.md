@@ -45,3 +45,50 @@ Run it daily via cron, e.g. `0 8 * * * cd /path && python -m dynasty_digest`.
 ```bash
 pytest -q
 ```
+
+---
+
+# Lineup Optimizer (`ff_lineups`)
+
+Projects every rostered player in a Sleeper league two ways, then sets the best lineup for **every team**:
+
+- **Odds**: sportsbook player props (The Odds API, free tier), converted to expected stats and scored with your league's settings.
+- **Sleeper**: Sleeper's own weekly projections (free, no key).
+
+Both numbers are shown side by side. The optimizer uses odds where props exist and falls back to Sleeper (K, DEF, low-usage players). It also flags where a Sleeper-only lineup would differ.
+
+## Setup
+
+```bash
+export SLEEPER_LEAGUE_ID=123456789012345678   # from your league URL
+export ODDS_API_KEY=...                       # free key: https://the-odds-api.com
+python -m ff_lineups                          # --slate auto|thu|sun, --no-odds, --week N
+```
+
+Output: `reports/*_lineups.md` (also printed) and `*_lineups.json`.
+
+## Credit budget (free tier = 500/month)
+
+- Markets: pass yds, pass TDs, rush yds, receptions, rec yds, anytime TD = 6 credits per game.
+- Each game is fetched **once per week** and cached in `data/odds/`: Thursday run → Thu–Sat games, Sunday run → Sun + Mon games.
+- ~16 games × 6 = ~96/week, ~480 in a 5-week month. If credits run short it fetches the earliest games it can afford and logs it.
+- `--no-odds` re-runs any time for 0 credits (fresh Sleeper projections + injuries, cached props).
+
+## How props become points
+
+- **Yardage** lines are medians. De-vig the over/under, shift the line by the implied probability, then convert to a mean with a log-normal skew (+3% pass, +11% rush, +13% receiving).
+- **Counts** (receptions, pass TDs): Poisson mean that matches the de-vigged over probability.
+- **Anytime TD**: de-vigged P(TD) → expected TDs = −ln(1−p). Split rush/rec by yardage share; for QBs it counts as rushing TDs.
+- Median across books. Stats with no prop (INTs, fumbles, 2-pt, QB rush yards if missing) come from Sleeper.
+- Players already kicked off are locked in place; Out/IR/PUP/Suspended players project 0.
+
+## Schedule
+
+`.github/workflows/lineups.yml` runs Thursday 14:00 UTC and Sunday 12:00 UTC. Add repo secrets `SLEEPER_LEAGUE_ID` and `ODDS_API_KEY`. The report shows in the run's summary page and as an artifact. Props cache carries between runs via `actions/cache`.
+
+Local cron equivalent (ET machine):
+
+```
+0 9 * * 4  cd /path && python -m ff_lineups --slate thu
+0 8 * * 0  cd /path && python -m ff_lineups --slate sun
+```
